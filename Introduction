@@ -1,0 +1,13 @@
+**Key Features of the Updated Script
+
+*Threading for UDP Listener
+The UDP listener runs in a separate thread to continuously receive data without blocking Crazyflie commands.
+
+*Dynamic Control Updates
+The Crazyflie command function fetches the latest roll, pitch, yaw_rate, and thrust values from shared control_data.
+
+*Exception Handling and Cleanup
+Ensures proper cleanup of the UDP socket and thread upon script termination.
+
+*Data Scaling
+The received roll, pitch, and yaw values are scaled (e.g., divided by 100) to match the Crazyflie's expected input range.
