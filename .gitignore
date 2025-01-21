@@ -1,171 +1,75 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+import time
+import socket
+import struct
+from threading import Thread, Event
+from cflib.crazyflie import Crazyflie
+from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
+from cflib.crazyflie.util import uri_helper
 
-# C extensions
-*.so
+# Initialize the library
+import cflib.crtp
+cflib.crtp.init_drivers()
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Set the URI of your Crazyflie
+URI = uri_helper.uri_from_env(default='radio://0/80/2M')
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# UDP Configuration
+udp_ip = "127.0.0.1"
+udp_port = 52001
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind((udp_ip, udp_port))
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# Shared data structure for roll, pitch, yaw
+control_data = {'roll': 0, 'pitch': 0, 'yaw_rate': 0, 'thrust': 0}
+stop_event = Event()
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
+def udp_listener():
+    """Listens for UDP packets and updates control data."""
+    global control_data
+    while not stop_event.is_set():
+        try:
+            data, addr = sock.recvfrom(1024)
+            if len(data) == 6:
+                roll, pitch, yaw_rate = struct.unpack('<hhh', data)
+                control_data['roll'] = roll / 100  # Scale appropriately
+                control_data['pitch'] = pitch / 100  # Scale appropriately
+                control_data['yaw_rate'] = yaw_rate / 100  # Scale appropriately
+                control_data['thrust'] = 40000  # Example thrust value
+            else:
+                print(f"Unexpected data length: {len(data)}. Skipping...")
+        except Exception as e:
+            print(f"UDP listener error: {e}")
+            break
 
-# Translations
-*.mo
-*.pot
+def send_attitude_commands(scf):
+    """Sends attitude commands to the Crazyflie."""
+    commander = scf.cf.commander
+    try:
+        print("Sending attitude commands...")
+        while not stop_event.is_set():
+            roll = control_data['roll']
+            pitch = control_data['pitch']
+            yaw_rate = control_data['yaw_rate']
+            thrust = control_data['thrust']
+            
+            commander.send_setpoint(roll, pitch, yaw_rate, thrust)
+            time.sleep(0.1)  # Send commands at ~10Hz
+    finally:
+        # Stop sending commands to land the Crazyflie
+        commander.send_setpoint(0, 0, 0, 0)
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+# Start UDP listener in a separate thread
+listener_thread = Thread(target=udp_listener)
+listener_thread.start()
 
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
-
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#pdm.lock
-#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
-#   in version control.
-#   https://pdm.fming.dev/latest/usage/project/#working-with-version-control
-.pdm.toml
-.pdm-python
-.pdm-build/
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
-
-# PyPI configuration file
-.pypirc
+try:
+    # Connect to the Crazyflie and start sending commands
+    with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+        send_attitude_commands(scf)
+except KeyboardInterrupt:
+    print("Interrupted by user.")
+finally:
+    stop_event.set()
+    listener_thread.join()
+    sock.close()
+    print("Resources cleaned up. Exiting...")
